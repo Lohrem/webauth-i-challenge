@@ -1,12 +1,25 @@
 const express = require('express')
 const db = require('./data/dbConfig.js')
-// const router = express.Router()
 const bcrypt = require('bcryptjs')
 const server = express()
+const session = require('express-session')
+const restricted = require('./restricted-mw.js')
+
+const sessionConfig = {
+  name: 'batman', //sid will be the default name if none is provided
+  secret: 'jokerisbetterthanthanos',
+  cookie: {
+    maxAge: 1000 * 60 * 60,
+    secure: false, //during development it's ok to have it as false but not in production
+    httpOnly: true, //this keeps the cookie from getting accessed by a JS engine
+  },
+  resave: false,
+  saveUninitialized: false //GDPR laws on setting cookies automatically
+}
 
 server.use(express.json())
+server.use(session(sessionConfig))
 
-let isLoggedIn = false
 server.post('/api/register/', async (req, res) => {
   const user = req.body
   const hash = bcrypt.hashSync(user.password, 12)
@@ -14,23 +27,26 @@ server.post('/api/register/', async (req, res) => {
   try {
     const newUser = await db('users').insert(user)
     res.status(201).json(newUser)
-    isLoggedIn = false
   } catch (err) {
     console.log(err)
     res.status(500).json(err)
   }
 })
 server.post('/api/login/', async (req, res) => {
-  const { username, password } = req.body
-  const user = await db('users').where({username}).first()
-  isLoggedIn = true
+  const {
+    username,
+    password
+  } = req.body
+  const user = await db('users').where({
+    username
+  }).first()
   try {
-    if (user && bcrypt.compareSync(password, user.password) && isLoggedIn) {
+    if (user && bcrypt.compareSync(password, user.password)) {
+      req.session.user = user
       res.status(201).json({
         message: `Welcome ${user.username}`
       })
     } else {
-      isLoggedIn = false
       res.status(404).json({
         message: `Invalid credentials`
       })
@@ -40,20 +56,29 @@ server.post('/api/login/', async (req, res) => {
     res.status(500).json(err)
   }
 })
-server.get('/api/users/', async (req, res) => {
+server.get('/api/users/', restricted, async (req, res) => {
   try {
-    if(isLoggedIn) {
-      const users = await db('users')
-      res.status(200).json(users)
-    }
-    else {
-      res.status(403).json({
-        message: "You must be logged in"
-      })
-    }
+    const users = await db('users')
+    res.status(200).json(users)
   } catch (err) {
     console.log(err)
     res.status(500).json(500)
+  }
+})
+server.get('/api/logout/', async (req, res) => {
+  if (req.session) {
+    req.session.destroy(err => {
+      if (err) res.json({
+        error: "error logging you out"
+      })
+      else res.status(200).json({
+        message: "see ya"
+      })
+    })
+  } else {
+    res.status(200).json({
+      message: "yeet"
+    })
   }
 })
 
